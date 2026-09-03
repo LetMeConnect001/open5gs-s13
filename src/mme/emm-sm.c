@@ -1414,12 +1414,17 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
                 break;
             }
-/* We need to make sure the UE is valid before sending the Update Location*/
-
-            if (mme_self()->eir.enabled) 
+            /* ME identity check against the EIR, before the S6a ULR
+             * (TS 23.401 clause 5.3.2.1). Attach only, and never for
+             * emergency attach. */
+            if (mme_self()->eir.enabled &&
+                mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST &&
+                mme_ue->nas_eps.attach.value !=
+                    OGS_NAS_ATTACH_TYPE_EPS_EMERGENCY_ATTACH) {
                 mme_s13_send_ecr(enb_ue, mme_ue);
-            else
+            } else {
                 mme_s6a_send_ulr(enb_ue, mme_ue, 0);
+            }
 
             if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
