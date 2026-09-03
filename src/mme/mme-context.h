@@ -1441,7 +1441,7 @@ uint8_t mme_selected_enc_algorithm(mme_ue_t *mme_ue);
 void mme_ue_save_memento(mme_ue_t *mme_ue, mme_ue_memento_t *memento);
 void mme_ue_restore_memento(mme_ue_t *mme_ue, const mme_ue_memento_t *memento);
 
-mme_eir_cache_entry_t *mme_eir_cache_find(const char *imsi_bcd);
+mme_eir_cache_entry_t *mme_eir_cache_find(const char *imeisv_bcd);
 int  mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
         uint32_t status);
 void mme_eir_cache_remove_all(void);

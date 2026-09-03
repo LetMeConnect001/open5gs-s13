@@ -243,10 +243,10 @@ static int mme_context_prepare(void)
 
     self.eir.whitelist_action   = MME_EIR_ALLOW;
     self.eir.greylist_action    = MME_EIR_ALLOW;
-    self.eir.blacklist_action   = MME_EIR_ALLOW;   /* était : allow_blacklist = false → reject */
+    self.eir.blacklist_action   = MME_EIR_ALLOW;   
     self.eir.max_age            = 3600;
-    self.eir.failure_action     = MME_EIR_ALLOW;   /* renommé depuis on_unavailable */
-    self.eir.missing_pei_action = MME_EIR_ALLOW;   /* nouveau */
+    self.eir.failure_action     = MME_EIR_ALLOW;   
+    self.eir.missing_pei_action = MME_EIR_ALLOW;   
 
 
     return OGS_OK;
@@ -3303,12 +3303,12 @@ mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd)
     return NULL;
 }
 
-mme_eir_cache_entry_t *mme_eir_cache_find(const char *imsi_bcd)
+mme_eir_cache_entry_t *mme_eir_cache_find(const char *imeisv_bcd)
 {
-    ogs_assert(imsi_bcd);
+    ogs_assert(imeisv_bcd);
 
     return (mme_eir_cache_entry_t *)ogs_hash_get(
-            self.eir.cache, imsi_bcd, strlen(imsi_bcd));
+            self.eir.cache, imeisv_bcd, strlen(imeisv_bcd));
 }
 
 int mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
@@ -3319,25 +3319,25 @@ int mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
     ogs_assert(imsi_bcd);
     ogs_assert(imeisv_bcd);
 
-    entry = mme_eir_cache_find(imsi_bcd);
+    entry = mme_eir_cache_find(imeisv_bcd);
     if (!entry) {
         ogs_pool_alloc(&mme_eir_cache_pool, &entry);
         if (!entry) {
-            ogs_error("[%s] EIR cache pool exhausted", imsi_bcd);
+            ogs_error("[%s] EIR cache pool exhausted", imeisv_bcd);
             return OGS_ERROR;
         }
         memset(entry, 0, sizeof *entry);
 
+        /* IMEISV is the cache key; IMSI is kept only for logging. */
+        ogs_cpystrn(entry->imeisv_bcd, imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN+1);
         ogs_cpystrn(entry->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
 
         ogs_list_add(&self.eir.cache_list, entry);
         /* The hash does not copy the key: point it at the entry's own
          * buffer so it stays valid for the lifetime of the entry. */
         ogs_hash_set(self.eir.cache,
-                entry->imsi_bcd, strlen(entry->imsi_bcd), entry);
+                entry->imeisv_bcd, strlen(entry->imeisv_bcd), entry);
     }
-
-    ogs_cpystrn(entry->imeisv_bcd, imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN+1);
     entry->status = status;
     entry->valid = true;
     entry->checked_at = ogs_time_now();
@@ -3352,7 +3352,7 @@ void mme_eir_cache_remove_all(void)
     ogs_list_for_each_safe(&self.eir.cache_list, next_entry, entry) {
         ogs_list_remove(&self.eir.cache_list, entry);
         ogs_hash_set(self.eir.cache,
-                entry->imsi_bcd, strlen(entry->imsi_bcd), NULL);
+                entry->imeisv_bcd, strlen(entry->imeisv_bcd), NULL);
         ogs_pool_free(&mme_eir_cache_pool, entry);
     }
 }

@@ -793,7 +793,7 @@ cleanup:
             s13_result = mme_s13_handle_eca(mme_ue, s13_message);
             
             if (s13_message->result_code == ER_DIAMETER_SUCCESS)
-                mme_eir_cache_update(mme_ue->imeisv_bcd, mme_ue->imeisv_bcd,
+                mme_eir_cache_update(mme_ue->imsi_bcd, mme_ue->imeisv_bcd,
                     s13_message->eca_message.equipment_status_code);
             /*
              * The EIR gave no verdict: it is up to the operator whether an
