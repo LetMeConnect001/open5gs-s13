@@ -241,12 +241,11 @@ static int mme_context_prepare(void)
     self.dns.cache_ttl = 60;
     self.dns.guard_timeout = 3000;
 
-    self.eir.whitelist_action   = MME_EIR_ALLOW;
     self.eir.greylist_action    = MME_EIR_ALLOW;
-    self.eir.blacklist_action   = MME_EIR_ALLOW;   
+    self.eir.blacklist_action   = MME_EIR_ALLOW;
     self.eir.max_age            = 3600;
-    self.eir.failure_action     = MME_EIR_ALLOW;   
-    self.eir.missing_pei_action = MME_EIR_ALLOW;   
+    self.eir.failure_action     = MME_EIR_ALLOW;
+    self.eir.missing_pei_action = MME_EIR_ALLOW;
 
 
     return OGS_OK;
@@ -2541,13 +2540,6 @@ int mme_context_parse_config(void)
                                 if (!strcmp(v, "allow")) self.eir.missing_pei_action = MME_EIR_ALLOW;
                                 else if (!strcmp(v, "reject")) self.eir.missing_pei_action = MME_EIR_REJECT;
                                 else ogs_warn("unknown eir.missing_pei_action `%s` (allow|reject)", v);
-                            }
-                        } else if (!strcmp(eir_key, "whitelist_action")) {
-                            const char *v = ogs_yaml_iter_value(&eir_iter);
-                            if (v) {
-                                if (!strcmp(v, "allow")) self.eir.whitelist_action = MME_EIR_ALLOW;
-                                else if (!strcmp(v, "reject")) self.eir.whitelist_action = MME_EIR_REJECT;
-                                else ogs_warn("unknown eir.whitelist_action `%s` (allow|reject)", v);
                             }
                         } else if (!strcmp(eir_key, "greylist_action")) {
                             const char *v = ogs_yaml_iter_value(&eir_iter);

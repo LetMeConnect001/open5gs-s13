@@ -2716,14 +2716,14 @@ void mme_s13_send_ecr(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     if (strlen(mme_ue->imeisv_bcd) < OGS_MAX_IMEISV_BCD_LEN) {
         ogs_error("[%s] No valid IMEISV available, skipping EIR check",
                 mme_ue->imsi_bcd);
-                if (mme_self()->eir.missing_pei_action == MME_EIR_REJECT){
-                    mme_s13_reject_ue(enb_ue, mme_ue);
-                    return;
-                } else {
-                    mme_s6a_send_ulr(enb_ue, mme_ue, 0);
-                    return;
-                }   
+        if (mme_self()->eir.missing_pei_action == MME_EIR_REJECT) {
+            mme_s13_reject_ue(enb_ue, mme_ue);
+            return;
+        }
+        mme_s6a_send_ulr(enb_ue, mme_ue, 0);
+        return;
     }
+
     {
         mme_eir_cache_entry_t *cached = mme_eir_cache_find(mme_ue->imeisv_bcd);
 
@@ -2739,7 +2739,7 @@ void mme_s13_send_ecr(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
             ogs_info("[%s] EIR cache hit for IMEISV[%s]",
                     mme_ue->imsi_bcd, mme_ue->imeisv_bcd);
 
-            if (mme_s13_validate_eca(eca_message, mme_self()->eir) ==
+            if (mme_s13_validate_eca(eca_message, &mme_self()->eir) ==
                     MME_S13_RESULT_ALLOWED)
                 mme_s6a_send_ulr(enb_ue, mme_ue, 0);
             else
@@ -2900,27 +2900,6 @@ static void mme_s13_eca_cb(void *data, struct msg **msg)
 
     ret = clock_gettime(CLOCK_REALTIME, &ts);
     ogs_assert(ret == 0);
-
-
-    /*
-     * freeDiameter invokes this callback with *msg set to NULL when the
-     * peer never answered. The session state cannot be retrieved in that
-     * case, but 'data' is the same pointer that was stored, so the UE
-     * context can still be resolved and the operator policy
-     * (eir.failure_action) applied in the state machine.
-     */
-    
-    if (!msg || !*msg) {
-        struct sess_state *pending = (struct sess_state *)data;
-
-        ogs_error("No ME-Identity-Check-Answer from the EIR");
-        error++;
-        if (pending) {
-            mme_ue = mme_ue_find_by_id(pending->mme_ue_id);
-            enb_ue = enb_ue_find_by_id(pending->enb_ue_id);
-        }
-        goto cleanup;
-    }
 
     /* Search the session, retrieve its data */
     ret = fd_msg_sess_get(fd_g_config->cnf_dict, *msg, &session, &new);

@@ -6,7 +6,7 @@
 static mme_s13_result_e result_from_diameter(
                 const uint32_t *dia_err, const uint32_t *dia_exp_err);
 static mme_eir_action_e action_for_equipment(
-                uint32_t equipment_status_code, mme_eir_t eir_config);
+                uint32_t equipment_status_code, const mme_eir_t *eir_config);
 
 mme_s13_result_e mme_s13_validate_message(ogs_diam_s13_message_t *s13_message)
 {
@@ -23,7 +23,7 @@ mme_s13_result_e mme_s13_validate_message(ogs_diam_s13_message_t *s13_message)
 }
 
 mme_s13_result_e mme_s13_validate_eca(
-        ogs_diam_s13_eca_message_t eca_message, mme_eir_t eir_config)
+        ogs_diam_s13_eca_message_t eca_message, const mme_eir_t *eir_config)
 {
     uint32_t code = eca_message.equipment_status_code;
     mme_eir_action_e action = action_for_equipment(code, eir_config);
@@ -59,7 +59,7 @@ mme_s13_result_e mme_s13_handle_eca(
     if (rc != MME_S13_RESULT_ALLOWED)
         return rc;
 
-    return mme_s13_validate_eca(s13_message->eca_message, mme_self()->eir);
+    return mme_s13_validate_eca(s13_message->eca_message, &mme_self()->eir);
 }
 
 /*
@@ -83,15 +83,15 @@ static mme_s13_result_e result_from_diameter(
 }
 
 static mme_eir_action_e action_for_equipment(
-        uint32_t equipment_status_code, mme_eir_t eir_config)
+        uint32_t equipment_status_code, const mme_eir_t *eir_config)
 {
     switch (equipment_status_code) {
     case OGS_DIAM_S13_EQUIPMENT_WHITELIST:
-        return eir_config.whitelist_action;
+        return MME_EIR_ALLOW;
     case OGS_DIAM_S13_EQUIPMENT_GREYLIST:
-        return eir_config.greylist_action;
+        return eir_config->greylist_action;
     case OGS_DIAM_S13_EQUIPMENT_BLACKLIST:
-        return eir_config.blacklist_action;
+        return eir_config->blacklist_action;
     default:
         return MME_EIR_REJECT;   /* unrecognized status code: fail closed */
     }

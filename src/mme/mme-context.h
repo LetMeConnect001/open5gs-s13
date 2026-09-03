@@ -93,7 +93,8 @@ typedef struct mme_eir_s {
     const char  *host;
     const char  *realm;
 
-    mme_eir_action_e whitelist_action;
+    /* Whitelisted equipment is always allowed (no knob: rejecting what the
+     * EIR approves has no valid use). Only grey/black are configurable. */
     mme_eir_action_e greylist_action;
     mme_eir_action_e blacklist_action;
    
