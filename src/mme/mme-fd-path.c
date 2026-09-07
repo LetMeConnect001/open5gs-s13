@@ -46,6 +46,10 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg);
 static void mme_s6a_ula_cb(void *data, struct msg **msg);
 static void mme_s6a_pua_cb(void *data, struct msg **msg);
 static void mme_s13_eca_cb(void *data, struct msg **msg);
+static void mme_s13_ecr_expire_cb(void *data, DiamId_t sender,
+        size_t sender_len, struct msg **req);
+static int mme_s13_push_event(mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        ogs_diam_s13_message_t *s13_message);
 
 static void state_cleanup(struct sess_state *sess_data, os0_t sid, void *opaque)
 {
@@ -2861,8 +2865,20 @@ void mme_s13_send_ecr(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     ogs_assert(ret == 0);
     ogs_assert(sess_data == 0);
 
-    /* Send the request */
-    ret = fd_msg_send(&req, mme_s13_eca_cb, svg);
+    /* Send the request.
+     * freeDiameter wants an ABSOLUTE CLOCK_REALTIME deadline. Past it the
+     * request leaves the pending list (a late ECA is then discarded and
+     * mme_s13_eca_cb never runs for it) and mme_s13_ecr_expire_cb is
+     * called instead. Without it an EIR that is up but silent would block
+     * the UE forever and failure_action would never apply. */
+    if (mme_self()->eir.timeout) {
+        struct timespec deadline = svg->ts;   /* CLOCK_REALTIME, set above */
+        deadline.tv_sec += mme_self()->eir.timeout;
+        ret = fd_msg_send_timeout(&req, mme_s13_eca_cb, svg,
+                mme_s13_ecr_expire_cb, &deadline);
+    } else {
+        ret = fd_msg_send(&req, mme_s13_eca_cb, svg);
+    }
     ogs_assert(ret == 0);
 
     /* Increment the counter */
@@ -2871,12 +2887,43 @@ void mme_s13_send_ecr(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
 }
 
+static int mme_s13_push_event(mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        ogs_diam_s13_message_t *s13_message)
+{
+    int rv;
+    mme_event_t *e = NULL;
 
+    ogs_assert(mme_ue);
+    ogs_assert(enb_ue);
+    ogs_assert(s13_message);
+
+    e = mme_event_new(MME_EVENT_S13_MESSAGE);
+    if (!e) {
+        ogs_error("Failed to create MME event");
+        ogs_free(s13_message);
+        return OGS_ERROR;
+    }
+
+    e->mme_ue_id = mme_ue->id;
+    e->enb_ue_id = enb_ue->id;
+    e->s13_message = s13_message;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_free(e);
+        ogs_free(s13_message);
+        return OGS_ERROR;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+    return OGS_OK;
+}
 
 /* MME received ME Identity Check Answer from EIR */
 static void mme_s13_eca_cb(void *data, struct msg **msg)
 {
-    int ret, rv, new;
+    int ret, new;
     struct sess_state *sess_data;
     struct timespec ts;
     struct session *session;
@@ -2884,14 +2931,12 @@ static void mme_s13_eca_cb(void *data, struct msg **msg)
     struct avp_hdr *hdr;
     unsigned long dur;
     int error;
-    mme_event_t *e;
     mme_ue_t *mme_ue;
     enb_ue_t *enb_ue;
     ogs_diam_s13_message_t *s13_message;
 
     sess_data = NULL;
     error = 0;
-    e = NULL;
     mme_ue = NULL;
     enb_ue = NULL;
     s13_message = NULL;
@@ -3012,38 +3057,18 @@ cleanup:
      * leave the UE waiting until it gives up.
      */
     if (mme_ue && enb_ue) {
-        if (!s13_message) {
+        if (!s13_message)
             s13_message = ogs_calloc(1, sizeof(ogs_diam_s13_message_t));
-        }
         if (s13_message) {
             s13_message->cmd_code = OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK;
             if (error && s13_message->result_code == ER_DIAMETER_SUCCESS) {
                 s13_message->result_code = ER_DIAMETER_UNABLE_TO_COMPLY;
                 s13_message->err = &s13_message->result_code;
             }
-
-            e = mme_event_new(MME_EVENT_S13_MESSAGE);
-            if (!e) {
-                ogs_error("Failed to create MME event");
-                ogs_free(s13_message);
-                s13_message = NULL;
-            } else {
-                e->mme_ue_id = mme_ue->id;
-                e->enb_ue_id = enb_ue->id;
-                e->s13_message = s13_message;
-                rv = ogs_queue_push(ogs_app()->queue, e);
-                if (rv != OGS_OK) {
-                    ogs_error("ogs_queue_push() failed:%d", (int)rv);
-                    mme_event_free(e);
-                    ogs_free(s13_message);
-                    s13_message = NULL;
-                    error++;
-                } else {
-                    ogs_pollset_notify(ogs_app()->pollset);
-                    /* Transfer ownership of s13_message to event */
-                    s13_message = NULL;
-                }
-            }
+            if (mme_s13_push_event(mme_ue, enb_ue, s13_message) != OGS_OK)
+                error++;
+            /* Ownership transferred, or already freed by the helper */
+            s13_message = NULL;
         }
     }
 
@@ -3091,6 +3116,96 @@ cleanup:
     if (sess_data) {
         state_cleanup(sess_data, NULL, NULL);
     }
+}
+
+/*
+ * No ECA within eir.timeout. freeDiameter has already unlinked the
+ * request from its pending list under its own lock, so this callback and
+ * mme_s13_eca_cb are mutually exclusive for a given request and a late
+ * answer is discarded by the core. This is the only chance to unblock the
+ * UE: it is turned into a synthetic UNABLE_TO_COMPLY so the state machine
+ * applies failure_action exactly as for an error answer.
+ * Runs in a freeDiameter thread, like the answer callback.
+ */
+static void mme_s13_ecr_expire_cb(void *data, DiamId_t sender,
+        size_t sender_len, struct msg **req)
+{
+    int ret, new;
+    struct session *session = NULL;
+    struct sess_state *sess_data = NULL;
+    mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+    ogs_diam_s13_message_t *s13_message = NULL;
+
+    ogs_assert(req);
+
+    ogs_warn("[MME] ME-Identity-Check-Request timed out (peer %.*s)",
+            (int)sender_len, sender ? (const char *)sender : "?");
+
+    if (!*req) {
+        ogs_error("No request in expiry callback");
+        goto cleanup;
+    }
+
+    /* The Session-Id AVP is in the request: recover our session state */
+    ret = fd_msg_sess_get(fd_g_config->cnf_dict, *req, &session, &new);
+    if (ret != 0 || !session) {
+        ogs_error("fd_msg_sess_get() failed on expired request");
+        goto cleanup;
+    }
+    ret = fd_sess_state_retrieve(mme_s13_reg, session, &sess_data);
+    if (ret != 0 || !sess_data) {
+        ogs_error("fd_sess_state_retrieve() failed - no session data");
+        goto cleanup;
+    }
+    if ((void *)sess_data != data) {
+        ogs_error("fd_sess_state_retrieve() failed - data mismatch");
+        goto cleanup;
+    }
+
+    mme_ue = mme_ue_find_by_id(sess_data->mme_ue_id);
+    if (!mme_ue) {
+        ogs_error("MME-UE Context has already been removed [%d]",
+                sess_data->mme_ue_id);
+        goto cleanup;
+    }
+    enb_ue = enb_ue_find_by_id(sess_data->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("[%s] ENB-S1 Context has already been removed [%d]",
+                mme_ue->imsi_bcd, sess_data->enb_ue_id);
+        goto cleanup;
+    }
+
+    s13_message = ogs_calloc(1, sizeof(ogs_diam_s13_message_t));
+    if (!s13_message) {
+        ogs_error("Failed to allocate s13_message");
+        goto cleanup;
+    }
+    s13_message->cmd_code = OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK;
+    s13_message->result_code = ER_DIAMETER_UNABLE_TO_COMPLY;
+    s13_message->err = &s13_message->result_code;
+
+    /* Ownership goes to the event, or is released by the helper */
+    (void)mme_s13_push_event(mme_ue, enb_ue, s13_message);
+    s13_message = NULL;
+
+cleanup:
+    if (s13_message)
+        ogs_free(s13_message);
+
+    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
+    ogs_diam_stats_self()->stats.nb_errs++;
+    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+
+    /* The core frees *req if we leave it set; be explicit anyway */
+    if (*req) {
+        ret = fd_msg_free(*req);
+        ogs_assert(ret == 0);
+        *req = NULL;
+    }
+
+    if (sess_data)
+        state_cleanup(sess_data, NULL, NULL);
 }
 
 int mme_fd_init(void)

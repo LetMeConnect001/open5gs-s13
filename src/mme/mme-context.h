@@ -99,7 +99,10 @@ typedef struct mme_eir_s {
     mme_eir_action_e blacklist_action;
    
     uint32_t    max_age;              /* s, 0 = no TTL */
-    mme_eir_action_e failure_action;  /* EIR unreachable/timeout/error */
+    uint32_t    timeout;              /* s, ECR answer deadline. On expiry
+                                       * failure_action applies. 0 = none */
+    mme_eir_action_e failure_action;  /* No verdict: EIR unreachable, error
+                                       * answer, or no answer within timeout */
     mme_eir_action_e missing_pei_action; /* no usable IMEISV to check */
 
     ogs_hash_t  *cache;          /* key = imeisv_bcd */

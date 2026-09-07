@@ -244,6 +244,7 @@ static int mme_context_prepare(void)
     self.eir.greylist_action    = MME_EIR_ALLOW;
     self.eir.blacklist_action   = MME_EIR_ALLOW;
     self.eir.max_age            = 3600;
+    self.eir.timeout            = 3;
     self.eir.failure_action     = MME_EIR_ALLOW;
     self.eir.missing_pei_action = MME_EIR_ALLOW;
 
@@ -361,6 +362,9 @@ static int mme_context_validation(void)
         ogs_error("No mme.eir.realm in '%s'", ogs_app()->file);
         return OGS_ERROR;
     }
+    if (self.eir.enabled && self.eir.timeout == 0)
+        ogs_warn("mme.eir.timeout is 0: an unresponsive EIR will never "
+                 "trigger failure_action");
 
     return OGS_OK;
 }
@@ -2527,6 +2531,9 @@ int mme_context_parse_config(void)
                         } else if (!strcmp(eir_key, "max_age")) {
                             const char *v = ogs_yaml_iter_value(&eir_iter);
                             if (v) self.eir.max_age = atoi(v);
+                        } else if (!strcmp(eir_key, "timeout")) {
+                            const char *v = ogs_yaml_iter_value(&eir_iter);
+                            if (v) self.eir.timeout = atoi(v);
                         } else if (!strcmp(eir_key, "failure_action")) {
                             const char *v = ogs_yaml_iter_value(&eir_iter);
                             if (v) {
