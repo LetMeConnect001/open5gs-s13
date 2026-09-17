@@ -303,6 +303,10 @@ static struct {
     int max_ue, max_peer, nf, csmap, emerg, sess, bearer;
 } saved_conf;
 
+static struct {
+    ogs_log_level_e mme, diam;
+} saved_log;
+
 static void s13_context_setup(void)
 {
     saved_conf.max_ue = ogs_global_conf()->max.ue;
@@ -322,14 +326,21 @@ static void s13_context_setup(void)
     ogs_app()->pool.bearer = S13_TEST_MAX_UE;
     mme_context_init();
 
-    /* mme_context_init() installs "mme" at the core default level; the
-     * other unit suites run their domains at error (abts-main.c), and
-     * every case below deliberately exercises the warn/info paths. */
-    ogs_log_set_domain_level(__mme_log_domain, OGS_LOG_ERROR);
+    /* Every case below deliberately drives the warn/error paths of
+     * mme-s13-handler.c and lib/diameter/s13: silence both domains for
+     * the suite, as the other unit suites do, and restore them after. */
+    saved_log.mme = ogs_log_get_domain_level(__mme_log_domain);
+    saved_log.diam = ogs_log_get_domain_level(__ogs_diam_domain);
+    ogs_log_set_domain_level(__mme_log_domain, OGS_LOG_NONE);
+    ogs_log_set_domain_level(__ogs_diam_domain, OGS_LOG_NONE);
 }
 
 static void s13_context_teardown(void)
 {
+    /* Restore before mme_context_final() removes the "mme" domain */
+    ogs_log_set_domain_level(__mme_log_domain, saved_log.mme);
+    ogs_log_set_domain_level(__ogs_diam_domain, saved_log.diam);
+
     mme_context_final();
 
     /* Leave the process-wide configuration as we found it for the
