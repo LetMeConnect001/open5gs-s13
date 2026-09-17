@@ -45,8 +45,8 @@ mme:
   mme_name: open5gs-mme0
 #  eir:                            # ME Identity Check over S13 (attach only)
 #    enabled: true
-#    realm: eir.epc.mnc070.mcc999.3gppnetwork.org
-#    host: eir.epc.mnc070.mcc999.3gppnetwork.org   # optional Destination-Host
+#    realm: localdomain            # Destination-Realm
+#    host: eir.localdomain         # optional Destination-Host (open5gs-eird)
 #    timeout: 3                    # s, then failure_action applies
 #    max_age: 3600                 # s, cached verdict lifetime (0 = no expiry)
 #    unknown_action: allow         # allow(default)|reject
