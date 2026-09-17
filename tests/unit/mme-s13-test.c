@@ -254,6 +254,42 @@ static void s13_test_imeisv_is_usable(abts_case *tc, void *data)
     ABTS_TRUE(tc, !mme_s13_imeisv_is_usable("3512345678901 01"));
 }
 
+/* Terminal-Information (IMEI + Software-Version) -> PEI as stored by the EIR */
+static void s13_test_pei_from_terminal_info(abts_case *tc, void *data)
+{
+    char pei[OGS_DIAM_S13_MAX_PEI_LEN+1];
+
+    /* IMEI + SVN: the IMEISV form the AMF also sends over N5g-eir */
+    ABTS_INT_EQUAL(tc, OGS_OK, ogs_diam_s13_pei_from_terminal_info(
+            "49015420323751", 14, "86", 2, pei, sizeof(pei)));
+    ABTS_STR_EQUAL(tc, "imeisv-4901542032375186", pei);
+
+    /* IMEI alone: Luhn check digit appended */
+    ABTS_INT_EQUAL(tc, OGS_OK, ogs_diam_s13_pei_from_terminal_info(
+            "49015420323751", 14, NULL, 0, pei, sizeof(pei)));
+    ABTS_STR_EQUAL(tc, "imei-490154203237518", pei);
+    ABTS_INT_EQUAL(tc, OGS_OK, ogs_diam_s13_pei_from_terminal_info(
+            "86650704004053", 14, NULL, 0, pei, sizeof(pei)));
+    ABTS_STR_EQUAL(tc, "imei-866507040040534", pei);
+
+    /* Unusable input */
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "4901542032375", 13, "86", 2, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "490154203237518", 15, "86", 2, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "4901542032375a", 14, "86", 2, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "49015420323751", 14, "8", 1, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "49015420323751", 14, "8x", 2, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            NULL, 0, NULL, 0, pei, sizeof(pei)));
+    ABTS_INT_EQUAL(tc, OGS_ERROR, ogs_diam_s13_pei_from_terminal_info(
+            "49015420323751", 14, "86", 2, pei, 10));
+    ABTS_STR_EQUAL(tc, "", pei);
+}
+
 /*
  * mme_context_init() is needed by every test here, not only the cache
  * ones: it installs the "mme" log domain that mme-s13-handler.c logs to
@@ -587,6 +623,7 @@ abts_suite *test_mme_s13(abts_suite *suite)
     abts_run_test(suite, s13_test_handle_eca, NULL);
     abts_run_test(suite, s13_test_timeout_follows_failure_action, NULL);
     abts_run_test(suite, s13_test_imeisv_is_usable, NULL);
+    abts_run_test(suite, s13_test_pei_from_terminal_info, NULL);
 
     /* Cache */
     abts_run_test(suite, s13_test_cache_basic, NULL);
