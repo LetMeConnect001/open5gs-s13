@@ -2717,37 +2717,21 @@ void mme_s13_send_ecr(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
      * split, so the check is skipped rather than sending a malformed ECR.
      */
 
-    if (strlen(mme_ue->imeisv_bcd) < OGS_MAX_IMEISV_BCD_LEN) {
-        ogs_error("[%s] No valid IMEISV available, skipping EIR check",
-                mme_ue->imsi_bcd);
-        if (mme_self()->eir.missing_pei_action == MME_EIR_REJECT) {
-            mme_s13_reject_ue(enb_ue, mme_ue);
-            return;
-        }
-        mme_s6a_send_ulr(enb_ue, mme_ue, 0);
+    if (!mme_s13_imeisv_is_usable(mme_ue->imeisv_bcd)) {
+        mme_s13_complete_check(enb_ue, mme_ue,
+                mme_s13_missing_pei_cause(&mme_self()->eir));
         return;
     }
 
     {
-        mme_eir_cache_entry_t *cached = mme_eir_cache_find(mme_ue->imeisv_bcd);
+        mme_eir_cache_entry_t *cached =
+            mme_eir_cache_lookup(mme_ue->imeisv_bcd);
 
-        if (cached && cached->valid &&
-            (mme_self()->eir.max_age == 0 ||
-             ogs_time_now() - cached->checked_at <
-                 (ogs_time_t)mme_self()->eir.max_age * OGS_USEC_PER_SEC)) {
-
-            ogs_diam_s13_eca_message_t eca_message;
-            memset(&eca_message, 0, sizeof(eca_message));
-            eca_message.equipment_status_code = cached->status;
-
-            ogs_info("[%s] EIR cache hit for IMEISV[%s]",
-                    mme_ue->imsi_bcd, mme_ue->imeisv_bcd);
-
-            if (mme_s13_validate_eca(eca_message, &mme_self()->eir) ==
-                    MME_S13_RESULT_ALLOWED)
-                mme_s6a_send_ulr(enb_ue, mme_ue, 0);
-            else
-                mme_s13_reject_ue(enb_ue, mme_ue);
+        if (cached) {
+            ogs_info("[%s] EIR cache hit", mme_ue->imsi_bcd);
+            mme_s13_complete_check(enb_ue, mme_ue,
+                    mme_s13_equipment_status_cause(
+                        cached->status, &mme_self()->eir));
             return;
         }
     }

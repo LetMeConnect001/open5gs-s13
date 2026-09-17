@@ -239,12 +239,11 @@ static int mme_context_prepare(void)
     self.dns.cache_ttl = 60;
     self.dns.guard_timeout = 3000;
 
-    self.eir.greylist_action    = MME_EIR_ALLOW;
-    self.eir.blacklist_action   = MME_EIR_ALLOW;
-    self.eir.max_age            = 3600;
-    self.eir.timeout            = 3;
+    self.eir.unknown_action     = MME_EIR_ALLOW;
     self.eir.failure_action     = MME_EIR_ALLOW;
     self.eir.missing_pei_action = MME_EIR_ALLOW;
+    self.eir.max_age            = 3600;
+    self.eir.timeout            = 3;
 
 
     return OGS_OK;
@@ -460,6 +459,25 @@ static int parse_rai(ogs_yaml_iter_t *parent_iter, ogs_nas_rai_t *rai)
 
     if (!lai_parsed || !rac_parsed)
         return OGS_ERROR;
+    return OGS_OK;
+}
+
+/* Same contract as amf_context_parse_eir_action(): an invalid value is a
+ * configuration error, not a silently applied default. */
+static int mme_context_parse_eir_action(
+        ogs_yaml_iter_t *iter, const char *key, mme_eir_action_e *action)
+{
+    const char *value = ogs_yaml_iter_value(iter);
+
+    if (!value || !strcmp(value, "allow"))
+        *action = MME_EIR_ALLOW;
+    else if (!strcmp(value, "reject"))
+        *action = MME_EIR_REJECT;
+    else {
+        ogs_error("invalid %s `%s` (expected `allow` or `reject`)", key, value);
+        return OGS_ERROR;
+    }
+
     return OGS_OK;
 }
 
@@ -2540,34 +2558,18 @@ int mme_context_parse_config(void)
                         } else if (!strcmp(eir_key, "timeout")) {
                             const char *v = ogs_yaml_iter_value(&eir_iter);
                             if (v) self.eir.timeout = atoi(v);
+                        } else if (!strcmp(eir_key, "unknown_action")) {
+                            rv = mme_context_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.unknown_action);
+                            if (rv != OGS_OK) return rv;
                         } else if (!strcmp(eir_key, "failure_action")) {
-                            const char *v = ogs_yaml_iter_value(&eir_iter);
-                            if (v) {
-                                if (!strcmp(v, "allow")) self.eir.failure_action = MME_EIR_ALLOW;
-                                else if (!strcmp(v, "reject")) self.eir.failure_action = MME_EIR_REJECT;
-                                else ogs_warn("unknown eir.failure_action `%s` (allow|reject)", v);
-                            }
+                            rv = mme_context_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.failure_action);
+                            if (rv != OGS_OK) return rv;
                         } else if (!strcmp(eir_key, "missing_pei_action")) {
-                            const char *v = ogs_yaml_iter_value(&eir_iter);
-                            if (v) {
-                                if (!strcmp(v, "allow")) self.eir.missing_pei_action = MME_EIR_ALLOW;
-                                else if (!strcmp(v, "reject")) self.eir.missing_pei_action = MME_EIR_REJECT;
-                                else ogs_warn("unknown eir.missing_pei_action `%s` (allow|reject)", v);
-                            }
-                        } else if (!strcmp(eir_key, "greylist_action")) {
-                            const char *v = ogs_yaml_iter_value(&eir_iter);
-                            if (v) {
-                                if (!strcmp(v, "allow")) self.eir.greylist_action = MME_EIR_ALLOW;
-                                else if (!strcmp(v, "reject")) self.eir.greylist_action = MME_EIR_REJECT;
-                                else ogs_warn("unknown eir.greylist_action `%s` (allow|reject)", v);
-                            }
-                        } else if (!strcmp(eir_key, "blacklist_action")) {
-                            const char *v = ogs_yaml_iter_value(&eir_iter);
-                            if (v) {
-                                if (!strcmp(v, "allow")) self.eir.blacklist_action = MME_EIR_ALLOW;
-                                else if (!strcmp(v, "reject")) self.eir.blacklist_action = MME_EIR_REJECT;
-                                else ogs_warn("unknown eir.blacklist_action `%s` (allow|reject)", v);
-                            }
+                            rv = mme_context_parse_eir_action(&eir_iter,
+                                    eir_key, &self.eir.missing_pei_action);
+                            if (rv != OGS_OK) return rv;
                         } else
                             ogs_warn("unknown key `%s`", eir_key);
                     }
@@ -3272,6 +3274,50 @@ mme_eir_cache_entry_t *mme_eir_cache_find(const char *imeisv_bcd)
             self.eir.cache, imeisv_bcd, strlen(imeisv_bcd));
 }
 
+bool mme_eir_cache_entry_is_fresh(const mme_eir_cache_entry_t *entry,
+        uint32_t max_age, ogs_time_t now)
+{
+    ogs_assert(entry);
+
+    /* max_age == 0: no TTL, a verdict never expires */
+    if (max_age == 0)
+        return true;
+
+    return now - entry->checked_at < (ogs_time_t)max_age * OGS_USEC_PER_SEC;
+}
+
+void mme_eir_cache_remove(mme_eir_cache_entry_t *entry)
+{
+    ogs_assert(entry);
+
+    ogs_list_remove(&self.eir.cache_list, entry);
+    ogs_hash_set(self.eir.cache,
+            entry->imeisv_bcd, strlen(entry->imeisv_bcd), NULL);
+    ogs_pool_free(&mme_eir_cache_pool, entry);
+}
+
+mme_eir_cache_entry_t *mme_eir_cache_lookup(const char *imeisv_bcd)
+{
+    mme_eir_cache_entry_t *entry = mme_eir_cache_find(imeisv_bcd);
+
+    if (!entry)
+        return NULL;
+
+    if (!mme_eir_cache_entry_is_fresh(entry, self.eir.max_age,
+                ogs_get_monotonic_time())) {
+        /* Stale: give the slot back now instead of letting it age in
+         * the pool until the LRU reaches it */
+        mme_eir_cache_remove(entry);
+        return NULL;
+    }
+
+    /* Hit: most recently used goes to the tail */
+    ogs_list_remove(&self.eir.cache_list, entry);
+    ogs_list_add(&self.eir.cache_list, entry);
+
+    return entry;
+}
+
 int mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
         uint32_t status)
 {
@@ -3281,11 +3327,22 @@ int mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
     ogs_assert(imeisv_bcd);
 
     entry = mme_eir_cache_find(imeisv_bcd);
-    if (!entry) {
+    if (entry) {
+        /* Refreshed: re-queued at the tail below */
+        ogs_list_remove(&self.eir.cache_list, entry);
+    } else {
         ogs_pool_alloc(&mme_eir_cache_pool, &entry);
         if (!entry) {
-            ogs_error("[%s] EIR cache pool exhausted", imeisv_bcd);
-            return OGS_ERROR;
+            /* Pool full: recycle the least recently used entry (head) */
+            mme_eir_cache_entry_t *lru = ogs_list_first(&self.eir.cache_list);
+            if (!lru) {
+                ogs_error("EIR cache pool exhausted and empty LRU list");
+                return OGS_ERROR;
+            }
+            ogs_debug("EIR cache full, evicting IMEISV[%s]", lru->imeisv_bcd);
+            mme_eir_cache_remove(lru);
+            ogs_pool_alloc(&mme_eir_cache_pool, &entry);
+            ogs_assert(entry);
         }
         memset(entry, 0, sizeof *entry);
 
@@ -3293,15 +3350,16 @@ int mme_eir_cache_update(const char *imsi_bcd, const char *imeisv_bcd,
         ogs_cpystrn(entry->imeisv_bcd, imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN+1);
         ogs_cpystrn(entry->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
 
-        ogs_list_add(&self.eir.cache_list, entry);
         /* The hash does not copy the key: point it at the entry's own
          * buffer so it stays valid for the lifetime of the entry. */
         ogs_hash_set(self.eir.cache,
                 entry->imeisv_bcd, strlen(entry->imeisv_bcd), entry);
     }
+
+    /* Tail = most recently used */
+    ogs_list_add(&self.eir.cache_list, entry);
     entry->status = status;
-    entry->valid = true;
-    entry->checked_at = ogs_time_now();
+    entry->checked_at = ogs_get_monotonic_time();
 
     return OGS_OK;
 }
@@ -3310,12 +3368,8 @@ void mme_eir_cache_remove_all(void)
 {
     mme_eir_cache_entry_t *entry = NULL, *next_entry = NULL;
 
-    ogs_list_for_each_safe(&self.eir.cache_list, next_entry, entry) {
-        ogs_list_remove(&self.eir.cache_list, entry);
-        ogs_hash_set(self.eir.cache,
-                entry->imeisv_bcd, strlen(entry->imeisv_bcd), NULL);
-        ogs_pool_free(&mme_eir_cache_pool, entry);
-    }
+    ogs_list_for_each_safe(&self.eir.cache_list, next_entry, entry)
+        mme_eir_cache_remove(entry);
 }
 
 void mme_ue_set_hss_identity(mme_ue_t *mme_ue,

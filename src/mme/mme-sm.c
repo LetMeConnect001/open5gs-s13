@@ -78,7 +78,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     ogs_diam_s6a_message_t *s6a_message = NULL;
     ogs_diam_s13_message_t *s13_message = NULL;
-    mme_s13_result_e s13_result = MME_S13_RESULT_ALLOWED;
     uint8_t emm_cause = 0;
 
     ogs_gtp_node_t *gnode = NULL;
@@ -790,33 +789,17 @@ cleanup:
         switch (s13_message->cmd_code) {
         case OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK:
             ogs_debug("OGS_DIAM_S13_CMD_CODE_ME_IDENTITY_CHECK");
-            s13_result = mme_s13_handle_eca(mme_ue, s13_message);
+            emm_cause = mme_s13_handle_eca(mme_ue, s13_message);
             
-            if (s13_message->result_code == ER_DIAMETER_SUCCESS)
+            /* Only a real verdict is cached, never an error nor an
+             * unrecognized status that failure_action had to cover */
+            if (s13_message->result_code == ER_DIAMETER_SUCCESS &&
+                mme_s13_status_is_verdict(
+                    s13_message->eca_message.equipment_status_code))
                 mme_eir_cache_update(mme_ue->imsi_bcd, mme_ue->imeisv_bcd,
                     s13_message->eca_message.equipment_status_code);
-            /*
-             * The EIR gave no verdict: it is up to the operator whether an
-             * unreachable EIR blocks the UE or lets it through.
-             */
-            if (s13_result == MME_S13_RESULT_UNAVAILABLE) {
-                if (mme_self()->eir.failure_action == MME_EIR_REJECT) {
-                    ogs_warn("[%s] EIR unavailable, rejecting the UE",
-                            mme_ue->imsi_bcd);
-                    s13_result = MME_S13_RESULT_DENIED;
-                } else {
-                    ogs_warn("[%s] EIR unavailable, allowing the UE",
-                            mme_ue->imsi_bcd);
-                    s13_result = MME_S13_RESULT_ALLOWED;
-                }
-            }
 
-            if (s13_result == MME_S13_RESULT_ALLOWED) {
-                /* Equipment accepted: resume with the Update Location */
-                mme_s6a_send_ulr(enb_ue, mme_ue, 0);
-                break;
-            }
-            mme_s13_reject_ue(enb_ue, mme_ue);
+            mme_s13_complete_check(enb_ue, mme_ue, emm_cause);
             break;
         default:
             ogs_error("Invalid Type[%d]", s13_message->cmd_code);
